@@ -1,0 +1,622 @@
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.net.ConnectException;
+import java.net.ServerSocket;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.List;
+
+import java.nio.charset.StandardCharsets;
+
+import org.apache.commons.net.telnet.TelnetClient;
+
+import java.io.FileReader;
+import java.nio.file.Files;
+
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+//import javax.swing.text.SimpleAttributeSet;
+
+public class Ciscosetting {
+    private static final int DUM_PORT = 9999; // 특정 포트 지정
+    private static final int TELNET_PORT = 23;
+
+    private static final int DELAY_MS = 1000;
+    private static String total_result = "";
+
+    private static void checkstatus() {
+        try (ServerSocket serverSocket = new ServerSocket(DUM_PORT)) { // 포트를 점유하여 실행 중인지 확인
+            System.out.println("프로그램 실행 중...");
+        } catch (IOException e) {
+            System.out.println("이미 실행 중인 인스턴스가 있습니다. 종료합니다.");
+            try {
+                System.exit(1);
+            } catch (Exception e1) {
+                // TODO Auto-generated catch block
+                e1.printStackTrace();
+            }
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+        String filename = null;
+
+        if (args.length > 0) {
+            filename = ".\\" + args[0];
+            System.out.println("입력 받은 파일명: " + filename);
+        } else {
+            filename = ".\\switchlist.txt";
+        }
+
+        checkstatus();
+
+        List<String[]> switches = new ArrayList<>();
+        // switches.add("10.194.78.29");
+        switches = readlist(filename);
+        sortByIPAddress(switches);
+        writeListToFile(filename, switches);
+
+        String log = "Start switch count " + switches.size() + "\n";
+        System.out.println(log);
+
+        List<CollectorSwitchData> items = new ArrayList<>();
+        for (String[] switchInfo : switches) {
+
+            String switchIp = switchInfo[0];
+
+            CollectorSwitchData mydata = new CollectorSwitchData();
+            mydata.setIPaddress(switchIp);
+            mydata.setLoginType(switchInfo[1]);
+
+            try {
+                /*
+                 * Socket socket = new Socket(switchIp, TELNET_PORT);
+                 * BufferedReader reader = new BufferedReader(
+                 * new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1));
+                 * Writer writer = new BufferedWriter(
+                 * new OutputStreamWriter(socket.getOutputStream(),
+                 * StandardCharsets.ISO_8859_1));
+                 */
+                TelnetClient telnet = new TelnetClient("VT100");
+                telnet.connect(switchIp, TELNET_PORT);
+                telnet.setSoTimeout(10000);
+                String output;
+                InputStream in = telnet.getInputStream();
+                OutputStream out = telnet.getOutputStream();
+
+                BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.ISO_8859_1));
+                Writer writer = new BufferedWriter(new OutputStreamWriter(out, StandardCharsets.ISO_8859_1));
+
+                if ("radious".equals(switchInfo[1])) {
+                    String username = switchInfo[2];
+                    String password = switchInfo[3];
+                    // 로그인
+                    readUntil(reader, "Username: ");
+                    sendCommand(writer, username + "\r\n");
+                    Thread.sleep(DELAY_MS);
+                    readUntil(reader, "Password: ");
+                    sendCommand(writer, password + "\r\n");
+                    Thread.sleep(DELAY_MS);
+
+                } else if ("core".equals(switchInfo[1])) {
+                    String username = switchInfo[2];
+                    String password = switchInfo[3];
+                    // 로그인
+
+                    readUntil(reader, "login: ");
+                    sendCommand(writer, username + "\r\n");
+                    Thread.sleep(DELAY_MS);
+                    readUntil(reader, "Password: ");
+                    sendCommand(writer, password + "\r\n");
+                    Thread.sleep(DELAY_MS);
+
+                } else if ("router".equals(switchInfo[1])) {
+                    String username = switchInfo[2];
+                    String password = switchInfo[3];
+                    String enpassword = switchInfo[4];
+                    // 로그인
+                    readUntil(reader, "Username: ");
+                    sendCommand(writer, username + "\r\n");
+                    Thread.sleep(DELAY_MS);
+                    readUntil(reader, "Password: ");
+                    sendCommand(writer, password + "\r\n");
+                    Thread.sleep(DELAY_MS);
+
+                    // 로그인 확인
+                    output = readUntil(reader, ">");
+                    if (output.endsWith(">")) {
+                        System.out.println(switchIp + ": Login successful");
+                    } else {
+                        System.out.println(switchIp + ": Login failed");
+                        telnet.disconnect();
+                        continue;
+                    }
+                    Thread.sleep(DELAY_MS);
+                    // enable
+                    sendCommand(writer, "enable\r\n");
+                    Thread.sleep(DELAY_MS);
+                    readUntil(reader, "Password: ");
+                    sendCommand(writer, enpassword + "\r\n");
+                    Thread.sleep(DELAY_MS);
+                } else if ("tacacs".equals(switchInfo[1])) {
+                    String username = switchInfo[2];
+                    String password = switchInfo[3];
+                    // 로그인
+                    readUntil(reader, "LGE username: ");
+                    sendCommand(writer, username + "\r\n");
+                    Thread.sleep(DELAY_MS);
+                    readUntil(reader, "LGE password: ");
+                    sendCommand(writer, password + "\r\n");
+                    Thread.sleep(DELAY_MS);
+
+                } else {
+                    String password = switchInfo[2];
+                    String enpassword = switchInfo[3];
+                    readUntil(reader, "Password: ");
+                    sendCommand(writer, password + "\r\n");
+                    Thread.sleep(DELAY_MS);
+
+                    // 로그인 확인
+                    output = readUntil(reader, ">");
+                    if (output.endsWith(">")) {
+                        System.out.println(switchIp + ": Login successful");
+                    } else {
+                        System.out.println(switchIp + ": Login failed");
+                        telnet.disconnect();
+                        continue;
+                    }
+                    Thread.sleep(DELAY_MS);
+                    // enable
+                    sendCommand(writer, "enable\r\n");
+                    Thread.sleep(DELAY_MS);
+                    readUntil(reader, "Password: ");
+                    sendCommand(writer, enpassword + "\r\n");
+                    Thread.sleep(DELAY_MS);
+
+                }
+                // enable 확인
+                output = readUntil(reader, "#");
+                System.out.println(output);
+                if (output.trim().endsWith("#")) {
+                    System.out.println(switchIp + ": Enable successful");
+                    log += switchIp + ": Enable successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to enable");
+                    log += switchIp + ": Failed to enable\n";
+                    telnet.disconnect();
+                    continue;
+                }
+                sendCommand(writer, "terminal length 0\r\n");
+                Thread.sleep(DELAY_MS);
+                if (output.trim().endsWith("#")) {
+                    System.out.println(switchIp + ": Terminal Setting done");
+                    output = "";
+                }
+                // show clock 실행
+                sendCommand(writer, "show clock\r\n");
+                Thread.sleep(DELAY_MS);
+                output = readUntil(reader, "#");
+                output = "real time : " + gettime() + "\n" + output;
+                saveResult(switchIp, "show_clock.txt", output);
+                if (output.trim().endsWith("#")) {
+                    System.out.println(switchIp + ": Show clock successful");
+                    log += switchIp + ": Show clock successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to show clock");
+                    log += switchIp + ": Failed to show clock\n";
+                    telnet.disconnect();
+                    continue;
+                }
+
+                // show ntp status 실행
+                sendCommand(writer, "show ntp status\r\n");
+                output = readUntil(reader, "#");
+                saveResult(switchIp, "show_ntp_status.txt", output);
+                if (output.trim().endsWith("#")) {
+                    mydata.getNTPSyncStatus(output);
+                    System.out.println(switchIp + ": Show NTP status successful");
+                    log += switchIp + ": Show NTP status successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to show NTP status");
+                    log += switchIp + ": Failed to show NTP status\n";
+                    telnet.disconnect();
+                    continue;
+                }
+
+                // show version 실행
+                sendCommand(writer, "show version\r\n");
+                output = readUntil(reader, "#");
+                saveResult(switchIp, "show_version.txt", output);
+                if (output.trim().endsWith("#")) {
+                    mydata.getVersiondata(output);
+                    System.out.println(switchIp + ": Show version successful");
+                    log += switchIp + ": Show version successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to show version");
+                    log += switchIp + ": Failed to show version\n";
+                    telnet.disconnect();
+                    continue;
+                }
+
+                // show ip interface brief 실행
+                sendCommand(writer, "show ip interface brief\r\n");
+                output = readUntil(reader, "#");
+                saveResult(switchIp, "show_ip_interface_brief.txt", output);
+                if (output.trim().endsWith("#")) {
+                    System.out.println(switchIp + ": Show ip interface brief successful");
+                    log += switchIp + ": Show ip interface brief successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to show ip interface brief");
+                    log += switchIp + ": Failed to show ip interface brief\n";
+                    telnet.disconnect();
+                    continue;
+                }
+
+                // show interfaces status 실행
+                sendCommand(writer, "show interfaces status\r\n");
+                output = readUntil(reader, "#");
+                saveResult(switchIp, "show_interface_status.txt", output);
+                mydata.GetRemainPort(output);
+                if (output.trim().endsWith("#")) {
+                    System.out.println(switchIp + ": show interfaces status successful");
+                    log += switchIp + ": show interfaces status successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to show interfaces status");
+                    log += switchIp + ": Failed to show interfaces status\n";
+                    telnet.disconnect();
+                    continue;
+                }
+
+                // show cdp neighbors 실행
+                sendCommand(writer, "show cdp neighbors\r\n");
+                output = readUntil(reader, "#");
+                saveResult(switchIp, "show_cdp_neighbors.txt", output);
+                if (output.trim().endsWith("#")) {
+                    mydata.getCDPDatas(output);
+                    System.out.println(switchIp + ": show cdp neighbors successful");
+                    log += switchIp + ": show cdp neighbors successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to show cdp neighbors ");
+                    log += switchIp + ": Failed to show cdp neighbors brief\n";
+                    telnet.disconnect();
+                    continue;
+                }
+
+                // show cdp neighbors detail 실행
+                sendCommand(writer, "show cdp neighbors detail\r\n");
+                output = readUntil(reader, "#");
+                saveResult(switchIp, "show_cdp_neighbors_detail.txt", output);
+                if (output.trim().endsWith("#")) {
+                    mydata.getCDPDatas(output);
+                    System.out.println(switchIp + ": show cdp neighbors detail successful");
+                    log += switchIp + ": show cdp neighbors successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to show cdp neighbors detail");
+                    log += switchIp + ": Failed to show cdp neighbors brief\n";
+                    telnet.disconnect();
+                    continue;
+                }
+                // show ip arp 실행
+                sendCommand(writer, "show ip arp\r\n");
+                output = readUntil(reader, "#");
+                saveResult(switchIp, "show_ip_arp.txt", output);
+                if (output.trim().endsWith("#")) {
+                    mydata.getCDPDatas(output);
+                    System.out.println(switchIp + ": show ip arp successful");
+                    log += switchIp + ": show ip arp successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to show ip arp");
+                    log += switchIp + ": Failed to show ip arp\n";
+                    telnet.disconnect();
+                    continue;
+                }
+                // show mac address-table 실행
+                sendCommand(writer, "show mac address-table\r\n");
+                output = readUntil(reader, "#");
+                saveResult(switchIp, "show_mac_address-table.txt", output);
+                if (output.trim().endsWith("#")) {
+                    mydata.getCDPDatas(output);
+                    System.out.println(switchIp + ": show mac address-table successful");
+                    log += switchIp + ": show mac address-table successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to show mac address-table");
+                    log += switchIp + ": Failed to show mac address-table\n";
+                    telnet.disconnect();
+                    continue;
+                }
+                // show vlan 실행
+                sendCommand(writer, "show vlan\r\n");
+                output = readUntil(reader, "#");
+                saveResult(switchIp, "show_vlan.txt", output);
+                if (output.trim().endsWith("#")) {
+                    mydata.getCDPDatas(output);
+                    System.out.println(switchIp + ": show vlan successful");
+                    log += switchIp + ": show vlan successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to show vlan");
+                    log += switchIp + ": Failed to show vlan\n";
+                    telnet.disconnect();
+                    continue;
+                }
+
+                // show processes 실행
+                sendCommand(writer, "show processes\r\n");
+                output = readUntil(reader, "#");
+                saveResult(switchIp, "show_processes.txt", output);
+                if (output.trim().endsWith("#")) {
+                    mydata.getCDPDatas(output);
+                    System.out.println(switchIp + ": show processes successful");
+                    log += switchIp + ": show processes successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to show processes");
+                    log += switchIp + ": Failed to show processes\n";
+                    telnet.disconnect();
+                    continue;
+                }
+
+                // show ip arp 실행
+                sendCommand(writer, "show ip arp\r\n");
+                output = readUntil(reader, "#");
+                saveResult(switchIp, "show_ip_arp.txt", output);
+                if (output.trim().endsWith("#")) {
+                    mydata.getCDPDatas(output);
+                    System.out.println(switchIp + ": show ip arp successful");
+                    log += switchIp + ": show ip arp successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to show ip arp");
+                    log += switchIp + ": Failed to show ip arp\n";
+                    telnet.disconnect();
+                    continue;
+                }
+
+                // show ip route 실행
+                sendCommand(writer, "show ip route\r\n");
+                output = readUntil(reader, "#");
+                saveResult(switchIp, "show_ip_route.txt", output);
+                if (output.trim().endsWith("#")) {
+                    mydata.getCDPDatas(output);
+                    System.out.println(switchIp + ": show ip route successful");
+                    log += switchIp + ": show ip route successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to show ip route");
+                    log += switchIp + ": Failed to show ip route\n";
+                    telnet.disconnect();
+                    continue;
+                }
+
+                // sh run 실행
+                sendCommand(writer, "show run\r\n");
+                output = readUntil(reader, "#");
+                saveResult(switchIp, "show_run.txt", output);
+                if (output.trim().endsWith("#")) {
+                    mydata.getHostnameInRun(output);
+                    System.out.println(switchIp + ": Show run successful");
+                    log += switchIp + ": Show run successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to execute show run");
+                    log += switchIp + ": Failed to execute show run\n";
+                    telnet.disconnect();
+                    continue;
+                }
+
+                // sh log 실행
+                sendCommand(writer, "show log\r\n");
+                output = readUntil(reader, "#");
+                saveResult(switchIp, "show_log.txt", output);
+                if (output.trim().endsWith("#")) {
+                    System.out.println(switchIp + ": Show log successful");
+                    log += switchIp + ": Show log successful\n";
+                } else {
+                    System.out.println(switchIp + ": Failed to execute show log");
+                    log += switchIp + ": Failed to execute show log\n";
+                    telnet.disconnect();
+                    continue;
+                }
+
+                telnet.disconnect();
+                items.add(mydata);
+
+            } catch (ConnectException e) {
+                log += switchIp + " Connection Fail\n";
+                continue;
+            } catch (Exception e) {
+                log += switchIp + e.getMessage() + "\n";
+            }
+        }
+        total_result += "---------------------------------------------------\n";
+        saveResult("", "log.txt", log + "\n" + total_result);
+        System.out.println("System finished");
+        String temp = "";
+        for (CollectorSwitchData i : items) {
+            temp = temp + i.ToString() + System.lineSeparator();
+        }
+        SimpleDateFormat sdf = new SimpleDateFormat("HH-mm");
+
+        Date now = new Date();
+        String time = sdf.format(now);
+        saveResult("Total", time + "_List.csv", temp);
+
+        // CDP Parser start
+        CDPParser cdp = new CDPParser();
+        cdp.parsing();
+
+        ZipTxtFiles zip = new ZipTxtFiles();
+        zip.ziping();
+
+    }
+
+    private static void sendCommand(Writer writer, String command) throws IOException {
+        writer.write(command);
+        writer.flush();
+    }
+
+    private static String readUntil2(BufferedReader reader, String pattern) throws IOException {
+        StringBuilder builder = new StringBuilder();
+        // char lastChar = pattern.charAt(pattern.length() - 1);
+        char[] buffer = new char[1024];
+        int read = 0;
+        while ((read = reader.read(buffer)) != -1) {
+
+            builder.append(buffer, 0, read);
+
+            System.out.println(new String(buffer, 0, read));
+
+            if (builder.length() >= pattern.length()) {
+                String end = builder.substring(builder.length() - pattern.length());
+
+                if (end.equals(pattern)) {
+                    break;
+                }
+            }
+        }
+
+        return builder.toString();
+    }
+
+    private static String readUntil(BufferedReader reader, String pattern) throws IOException {
+        StringBuilder builder = new StringBuilder();
+        char[] buffer = new char[1024];
+        int read;
+
+        while ((read = reader.read(buffer)) != -1) {
+            builder.append(buffer, 0, read);
+
+            // (선택) 방금 받은 것 그대로 콘솔로 보기
+            // System.out.print(new String(buffer, 0, read));
+
+            // ---- 핵심 변경: 끝부분 느슨 매칭 ----
+            int tailLen = Math.min(512, builder.length());
+            String tail = builder.substring(builder.length() - tailLen);
+
+            int idx = tail.lastIndexOf(pattern);
+            if (idx != -1) {
+                String after = tail.substring(idx + pattern.length());
+                // 패턴 뒤에 공백/제어문자만 있으면 프롬프트로 인정
+                if (after.replaceAll("\\p{Cntrl}", "").trim().isEmpty()) {
+                    // (디버그) 마지막 몇 글자와 코드 출력
+                    // System.out.println("[DEBUG] matched tail: [" + tail.substring(Math.max(0, idx
+                    // - 10)) + "]");
+                    for (int i = Math.max(0, tail.length() - 10); i < tail.length(); i++) {
+                        char c = tail.charAt(i);
+                        // System.out.printf("[DEBUG] tail[%d] char='%s' (code=%d)%n",i, (c == '\r' ?
+                        // "\\r" : c == '\n' ? "\\n" : String.valueOf(c)), (int) c);
+                    }
+                    break;
+                }
+            }
+            // ------------------------------------
+        }
+
+        return builder.toString();
+    }
+
+    private static String gettime() {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
+        Date now = new Date();
+        String date = sdf.format(now);
+        return date;
+    }
+
+    private static void saveResult(String switchIp, String fileName, String result) throws IOException {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+
+        Date now = new Date();
+        String date = sdf.format(now);
+        String filenm = date + "_" + switchIp + "_" + fileName;
+        total_result += "--------------" + filenm + "-----------------\n";
+        total_result += result + "\n";
+
+        Path directoryPath = Paths.get(".\\cisco\\" + date);
+
+        try {
+            // 디렉토리 생성
+            Files.createDirectories(directoryPath);
+
+            // System.out.println(directoryPath + " 디렉토리가 생성되었습니다.");
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        try {
+            BufferedWriter writer = new BufferedWriter(new FileWriter(".\\cisco\\" + date + "\\" + filenm));
+            writer.write(result);
+            writer.close();
+            System.out.println(switchIp + ": " + fileName + " saved successfully");
+        } catch (java.io.FileNotFoundException e) {
+            total_result += e.getMessage();
+            System.out.println(switchIp + ": " + fileName + " saved Fail");
+        }
+
+    }
+
+    private static List<String[]> readlist(String csvFile) {
+        String line;
+        List<String[]> firstColumnList = new ArrayList<>();
+
+        try (BufferedReader br = new BufferedReader(new FileReader(csvFile))) {
+            while ((line = br.readLine()) != null) {
+                if (!line.startsWith("#") && !line.trim().isEmpty()) {
+                    String[] temp = line.split(",");
+
+                    // 중복 확인: 리스트 안에 동일한 항목이 이미 있으면 추가하지 않음
+                    boolean isDuplicate = false;
+                    for (String[] existing : firstColumnList) {
+                        if (Arrays.equals(existing, temp)) {
+                            isDuplicate = true;
+                            break;
+                        }
+                    }
+
+                    if (!isDuplicate) {
+                        firstColumnList.add(temp);
+                    }
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return firstColumnList;
+    }
+
+    // ✅ IP 주소 정렬 로직
+    private static void sortByIPAddress(List<String[]> list) {
+        list.sort((a, b) -> {
+            String[] ipA = a[0].split("\\.");
+            String[] ipB = b[0].split("\\.");
+
+            for (int i = 0; i < 4; i++) {
+                int valA = Integer.parseInt(ipA[i]);
+                int valB = Integer.parseInt(ipB[i]);
+                if (valA != valB)
+                    return valA - valB;
+            }
+            return 0;
+        });
+    }
+
+    // ✅ 정렬된 결과를 파일로 저장
+    private static void writeListToFile(String csvFile, List<String[]> list) {
+        try (BufferedWriter bw = new BufferedWriter(new FileWriter(csvFile))) {
+            for (String[] row : list) {
+                bw.write(String.join(",", row));
+                bw.newLine();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+}
